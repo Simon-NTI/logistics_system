@@ -6,7 +6,8 @@ export enum ORDER_STATE {
     "preparing",
     "readyToShip",
     "inShipping",
-    "shipped"
+    "shipped",
+    "length"
 }
 
 export const orderSchema = new mongoose.Schema({
@@ -19,13 +20,13 @@ export const orderSchema = new mongoose.Schema({
     driver: { type: mongoose.Schema.ObjectId, ref: "Driver" },
     picker: { type: mongoose.Schema.ObjectId, ref: "Picker" },
 
-    dateRecieved: { type: Date, required: true },
-    datePreparing: Date,
-    dateReadyToShip: Date,
-    dateinShipping: Date,
-    dateShipped: Date,
+    recieved: { type: Date, required: true },
+    preparing: Date,
+    readyToShip: Date,
+    inShipping: Date,
+    shipped: Date,
 
-    price: Number
+    cost: { type: Number, required: true }
 });
 
 export const OrderModel = mongoose.model("Order", orderSchema);

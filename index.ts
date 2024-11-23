@@ -3,7 +3,7 @@ import { MongoClient } from "mongodb";
 import mongoose from "mongoose";
 
 import { WarehouseModel, warehouseSchema } from "./schemas/warehouseSchema";
-import { WORKER_OCCUPATION, WorkerModel } from "./schemas/workerSchema";
+import { WORKER_OCCUPATION, WorkerModel, workerSchema } from "./schemas/workerSchema";
 import { ORDER_STATE, OrderModel } from "./schemas/orderSchema";
 import { ProductModel } from "./schemas/productSchema";
 
@@ -46,33 +46,93 @@ const app = new Elysia()
     })
 
     .get("/worker", async ({ set, query }) => {
-        if (query.day) {
-            let result;
-            if (query.day == "today") {
-                const date = new Date(Date.now());
-                const day = date.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-                console.log(typeof day);
 
-                result = await WorkerModel.find({ [`weeklySchedule.${day}`]: { $exists: true } });
-            }
-            else {
-                result = await WorkerModel.find({ [`weeklySchedule.${query.day}`]: { $exists: true } });
-            }
-
+        if (!Object.keys(query).length) {
+            const result = await WorkerModel.find({});
             if (!result.length) {
                 set.status = 404;
-                return `No workers work found searching ${query.day}`;
+                return "No workers found";
             }
-
             return result;
         }
 
-        const result = await WorkerModel.find({});
+        let filter = {};
+
+        if (query.orderCount) {
+            filter["orders"] = { $size: query.orderCount };
+        }
+
+        if (query.day) {
+            if (query.day == "today") {
+                const date = new Date(Date.now());
+                const day = date.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
+
+                filter[`weeklySchedule.${day}`] = { $exists: true };
+            }
+            else {
+                filter[`weeklySchedule.${query.day}`] = { $exists: true };
+            }
+        }
+
+        if (query.occupation) {
+            filter["occupation"] = query.occupation;
+        }
+
+        const result = await WorkerModel.find(filter);
         if (!result.length) {
             set.status = 404;
             return "No workers found";
         }
+
         return result;
+    })
+
+    .post("/worker/:workerId/order", async ({ params, body, set }) => {
+        try {
+            const worker = await WorkerModel.findById(params.workerId);
+
+            if (!worker) {
+                set.status = 404;
+                return `Worker with id \"${params.workerId}\" not found`
+            }
+
+            for (let i = 0; i < body.orderIds.length; i++) {
+                const element = body.orderIds[i];
+                const order = await OrderModel.findById(element);
+
+                if (!order) {
+                    set.status = 404;
+                    return `Order with id \"${element} not found`;
+                }
+
+                worker.orders.push(order.id);
+            }
+
+            return worker;
+        }
+        catch (err) {
+            set.status = 404;
+            return err;
+        }
+    })
+
+    .delete("/worker/:workerId/order/:orderId", async ({ params, set }) => {
+        try {
+            const worker = await WorkerModel.findById(params.workerId);
+
+            if (!worker) {
+                set.status = 404;
+                return `Worker with id \"${params.workerId}\" not found`
+            }
+
+            worker.orders.splice(worker.orders.indexOf(params.orderId), 1);
+
+            return worker;
+        }
+        catch (err) {
+            set.status = 404;
+            return err;
+        }
     })
 
     .delete("/worker", async ({ set }) => {
@@ -84,80 +144,52 @@ const app = new Elysia()
         return result;
     })
 
-
-
-
-
-    .get("/driver", async ({ set, query }) => {
-        if (query.day) {
-            let result;
-            if (query.day == "today") {
-                const date = new Date(Date.now());
-                const day = date.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-                console.log(typeof day);
-
-                result = await WorkerModel.find({
-                    [`weeklySchedule.${day}`]: { $exists: true },
-                    occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.driver]
-                });
-            }
-            else {
-                result = await WorkerModel.find({
-                    [`weeklySchedule.${query.day}`]: { $exists: true },
-                    occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.driver]
-                });
-            }
-
-            if (!result.length) {
-                set.status = 404;
-                return `No drivers found, filtering by ${query.day}`;
-            }
-
-            return result;
-        }
-
-        const result = await WorkerModel.find({ occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.driver] });
-        if (!result.length) {
+    .delete("/worker/:workerId", async ({ params, set }) => {
+        const result = await WorkerModel.findByIdAndDelete(params.workerId);
+        if (!result) {
             set.status = 404;
-            return "No drivers found";
+            return `Worker with id \"${params.workerId}\" not found`;
         }
         return result;
     })
 
-    .get("/picker", async ({ set, query }) => {
-        if (query.day) {
-            let result;
-            if (query.day == "today") {
-                const date = new Date(Date.now());
-                const day = date.toLocaleDateString("en-US", { weekday: "long" }).toLowerCase();
-                console.log(typeof day);
-
-                result = await WorkerModel.find({
-                    [`weeklySchedule.${day}`]: { $exists: true },
-                    occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.picker]
-                });
-            }
-            else {
-                result = await WorkerModel.find({
-                    [`weeklySchedule.${query.day}`]: { $exists: true },
-                    occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.picker]
-                });
-            }
-
-            if (!result.length) {
-                set.status = 404;
-                return `No pickers found, filtering by ${query.day}`;
-            }
-
-            return result;
-        }
-
-        const result = await WorkerModel.find({ occupation: WORKER_OCCUPATION[WORKER_OCCUPATION.picker] });
-        if (!result.length) {
+    .delete("/worker/:workerId/warehouse/:warehouseId", async ({ params, set }) => {
+        const worker = await WorkerModel.findByIdAndDelete(params.workerId);
+        if (!worker) {
             set.status = 404;
-            return "No pickers found";
+            return `Worker with id \"${params.workerId}\" not found`;
         }
-        return result;
+
+        worker.deployedTo.splice(worker.deployedTo.indexOf(params.warehouseId));
+    })
+
+    .post("/worker/:workerId/warehouse", async ({ params, body, set }) => {
+        try {
+            const worker = await WorkerModel.findById(params.workerId);
+
+            if (!worker) {
+                set.status = 404;
+                return `Worker with id \"${params.workerId}\" not found`
+            }
+
+            for (let i = 0; i < body.warehouseIds.length; i++) {
+                const element = body.warehouseIds[i];
+                const warehouse = await WarehouseModel.findById(element);
+
+                if (!warehouse) {
+                    set.status = 404;
+                    return `Order with id \"${element} not found`;
+                }
+
+                worker.deployedTo.push(warehouse.id);
+            }
+
+            return worker;
+        }
+        catch (err) {
+            set.status = 404;
+            return err;
+        }
     })
 
 
@@ -187,80 +219,135 @@ const app = new Elysia()
     })
 
     .get("/order", async ({ set, query }) => {
-        let finalResult = [];
+        // TODO Unable to apply sortDate properly if status = "all"
+        let filter = {};
         // query.status
-        // query.month
+        // query.dateMin
+        // query.dateMax
+
+        if (query.status) {
+            if (!(query.status == "all")) {
+                filter["status"] = query.status;
+
+                if (query.dateMin) {
+                    filter[query.status] = { $gte: query.dateMin }
+                };
+
+                if (query.dateMax) {
+                    filter[query.status] = { $lte: query.dateMax }
+                }
+            }
+            else {
+                if (query.dateMin) {
+                    if (query.dateMax) {
+                        let or = [];
+                        for (let i = 0; i < ORDER_STATE.length; i++) {
+                            const element = ORDER_STATE[i];
+                            or.push({ [element]: { $gte: query.dateMin, $lte: query.dateMax } });
+                        }
+
+                        filter["$or"] = or;
+                    }
+                    else {
+                        let or = [];
+                        for (let i = 0; i < ORDER_STATE.length; i++) {
+                            const element = ORDER_STATE[i];
+                            or.push({ [element]: { $gte: query.dateMin } });
+                        }
+
+                        filter["$or"] = or;
+                    }
+                }
+                else {
+                    if (query.dateMax) {
+                        let or = [];
+                        for (let i = 0; i < ORDER_STATE.length; i++) {
+                            const element = ORDER_STATE[i];
+                            or.push({ [element]: { $lte: query.dateMax } });
+                        }
+
+                        filter["$or"] = or;
+                    }
+                }
+            }
+        }
 
         try {
-            if (query.status) {
-                const result = await OrderModel.find({ status: query.status });
+            let result = [];
 
-                if (!result.length) {
-                    set.status = 404;
-                    return `No orders found with status ${query.status}`;
-                }
-
-                finalResult = result;
-
-                if (query.month) {
-                    let result = [];
-
-                    for (let i = 0; i < finalResult.length; i++) {
-                        const element = finalResult[i];
-
-                        switch (query.status) {
-                            case (ORDER_STATE[ORDER_STATE.recieved]):
-                                {
-                                    if (query.month == element.dateRecieved.toLocaleString("en-US", { month: "long" }).toLocaleLowerCase()) {
-                                        result.push(element);
-                                    }
-                                    break;
-                                }
-                            case (ORDER_STATE[ORDER_STATE.preparing]):
-                                {
-                                    if (query.month == element.datePreparing.toLocaleString("en-US", { month: "long" }).toLocaleLowerCase()) {
-                                        result.push(element);
-                                    }
-                                    break;
-                                }
-                            case (ORDER_STATE[ORDER_STATE.readyToShip]):
-                                {
-                                    if (query.month == element.dateReadyToShip.toLocaleString("en-US", { month: "long" }).toLocaleLowerCase()) {
-                                        result.push(element);
-                                    }
-                                    break;
-                                }
-                            case (ORDER_STATE[ORDER_STATE.inShipping]):
-                                {
-                                    if (query.month == element.dateinShipping.toLocaleString("en-US", { month: "long" }).toLocaleLowerCase()) {
-                                        result.push(element);
-                                    }
-                                    break;
-                                }
-                            case (ORDER_STATE[ORDER_STATE.shipped]):
-                                {
-                                    if (query.month == element.dateShipped.toLocaleString("en-US", { month: "long" }).toLocaleLowerCase()) {
-                                        result.push(element);
-                                    }
-                                    break;
-                                }
-                        }
+            switch (query.sort) {
+                case ("date-ascending"):
+                    {
+                        result = await OrderModel.find(filter).sort({ [`${query.status}`]: "ascending" });
+                        break;
                     }
 
-                    finalResult = result;
-                }
+                case ("date-descending"):
+                    {
+                        result = await OrderModel.find(filter).sort({ [`${query.status}`]: "descending" });
+                        break;
+                    }
 
-                if (!finalResult.length) {
-                    set.status = 404;
-                    return "No orders found";
-                }
-                return finalResult;
+                case ("date-oldest"):
+                    {
+                        let resultTemp = await OrderModel.find(filter).sort({ [`${query.status}`]: "ascending" });
+                        result.push(resultTemp[0]);
+                        break;
+                    }
+
+                case ("date-latest"):
+                    {
+                        let resultTemp = await OrderModel.find(filter).sort({ [`${query.status}`]: "descending" });
+                        result.push(resultTemp[0]);
+                        break;
+                    }
+
+                case ("cost-ascending"):
+                    {
+                        result = await OrderModel.find(filter).sort({ cost: "ascending" });
+                        break;
+                    }
+
+                case ("cost-descending"):
+                    {
+                        result = await OrderModel.find(filter).sort({ cost: "descending" });
+                        break;
+                    }
+
+                case ("cost-lowest"):
+                    {
+                        let resultTemp = await OrderModel.find(filter).sort({ cost: "ascending" });
+                        result.push(resultTemp[0]);
+                        break;
+                    }
+
+                case ("cost-highest"):
+                    {
+                        let resultTemp = await OrderModel.find(filter).sort({ cost: "descending" });
+                        result.push(resultTemp[0]);
+                        break;
+                    }
+
+                default:
+                    {
+                        console.log(filter);
+                        result = await OrderModel.find(filter);
+                        break;
+                    }
             }
 
-            const result = await OrderModel.find({});
             if (!result.length) {
                 set.status = 404;
                 return "No orders found";
+            }
+
+            if (query.getTotalCost == "true") {
+                let runningTotal = 0;
+                for (let i = 0; i < result.length; i++) {
+                    runningTotal += result[i].cost;
+                }
+
+                return { total: runningTotal };
             }
 
             return result;
@@ -284,7 +371,8 @@ const app = new Elysia()
         const newOrder = new OrderModel({
             products: body.products,
             status: ORDER_STATE[ORDER_STATE.recieved],
-            dateRecieved: Date.now()
+            recieved: Date.now(),
+            cost: body.cost
         });
 
         try {
@@ -322,14 +410,14 @@ const app = new Elysia()
 
                         order.picker = picker.id;
                         order.status = body.status;
-                        order.datePreparing = Date.now();
+                        order.preparing = Date.now();
                         break;
                     }
 
                 case (ORDER_STATE[ORDER_STATE.readyToShip]):
                     {
                         order.status = body.status;
-                        order.dateReadyToShip = Date.now();
+                        order.readyToShip = Date.now();
                         break;
                     }
 
@@ -349,14 +437,14 @@ const app = new Elysia()
 
                         order.driver = driver.id;
                         order.status = body.status;
-                        order.dateInShipping = Date.now();
+                        order.inShipping = Date.now();
                         break;
                     }
 
                 case (ORDER_STATE[ORDER_STATE.shipped]):
                     {
                         order.status = body.status;
-                        order.dateShipped = Date.now();
+                        order.shipped = Date.now();
                         break;
                     }
 
